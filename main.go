@@ -15,49 +15,6 @@ import (
 	"github.com/hanwen/go-fuse/fuse/nodefs"
 )
 
-// indexedFile is a manageable discrete unit of info for a particular entry
-// used to keep things organized.
-type indexedFile struct {
-	Filename    string
-	IsDirectory bool
-	Timestamp   time.Time
-	Inode       uint64
-	Size        uint64
-
-	Data []byte
-}
-
-func (file *indexedFile) setAttributes(out *fuse.Attr) {
-	out.SetTimes(&file.Timestamp, &file.Timestamp, &file.Timestamp)
-
-	out.Mode = file.mode()
-	out.Ino = file.Inode
-
-	out.Size = file.size()
-	out.Blksize = 1024
-	out.Blocks = uint64(math.Ceil(float64(out.Size / uint64(out.Blksize))))
-
-	out.Uid = 1000
-	out.Gid = 1000
-}
-
-func (file *indexedFile) size() uint64 {
-	if file.IsDirectory == true {
-		// Just a small consistent constant size to show for all directories.
-		return 10
-	} else {
-		return uint64(len(file.Data))
-	}
-}
-
-func (file *indexedFile) mode() uint32 {
-	if file.IsDirectory == true {
-		return 0755 | uint32(syscall.S_IFDIR)
-	} else {
-		return 0644 | uint32(syscall.S_IFREG)
-	}
-}
-
 var (
 	// fileIndex maps file-paths to `indexedFile` structs. It's a flat
 	// structure. Only the root entry is populated statically. The other
@@ -124,6 +81,53 @@ var (
 	}
 )
 
+// indexedFile is a manageable discrete unit of info for a particular entry
+// used to keep things organized.
+type indexedFile struct {
+	Filename    string
+	IsDirectory bool
+	Timestamp   time.Time
+	Inode       uint64
+	Size        uint64
+
+	Data []byte
+}
+
+// setAttributes set the attributes into the struct from go-fuse.
+func (file *indexedFile) setAttributes(out *fuse.Attr) {
+	out.SetTimes(&file.Timestamp, &file.Timestamp, &file.Timestamp)
+
+	out.Mode = file.mode()
+	out.Ino = file.Inode
+
+	out.Size = file.size()
+	out.Blksize = 1024
+	out.Blocks = uint64(math.Ceil(float64(out.Size / uint64(out.Blksize))))
+
+	out.Uid = 1000
+	out.Gid = 1000
+}
+
+// size returns the size for the entry.
+func (file *indexedFile) size() uint64 {
+	if file.IsDirectory == true {
+		// Just a small consistent constant size to show for all directories.
+		return 10
+	} else {
+		return uint64(len(file.Data))
+	}
+}
+
+// mode returns the file-mode for the // mode returns the file-mode for the
+// file.
+func (file *indexedFile) mode() uint32 {
+	if file.IsDirectory == true {
+		return 0755 | uint32(syscall.S_IFDIR)
+	} else {
+		return 0644 | uint32(syscall.S_IFREG)
+	}
+}
+
 // HelloNode describes a single entry/inode in the filesystem.
 type HelloNode struct {
 	fs.Inode
@@ -142,21 +146,6 @@ func (hn *HelloNode) currentPath() string {
 
 	root := hn.Root().Operations().(*HelloNode)
 	return filepath.Join(root.path, path)
-}
-
-func (hn *HelloNode) Getattr(ctx context.Context, f fs.FileHandle, out *fuse.AttrOut) syscall.Errno {
-	path := hn.currentPath()
-	fmt.Printf("Getattr: [%s]\n", path)
-
-	entry, found := fileIndex[path]
-	if found == false {
-		fmt.Printf("Not found.\n")
-		return syscall.ENOENT
-	}
-
-	entry.setAttributes(&out.Attr)
-
-	return fs.OK
 }
 
 // Opendir just validates the existence of a directory (in our use-case).
@@ -195,8 +184,8 @@ func (hn *HelloNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) 
 	return ds, fs.OK
 }
 
-// Lookup returns the attributes for a given file. This is required for the stat
-// info in the-listings.
+// Lookup constructs a node for the given file. We set the attributes here as
+// well, but they can also, alternatively, be set using Getattr.
 func (hn *HelloNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (childNode *fs.Inode, errno syscall.Errno) {
 	childPath := filepath.Join(hn.currentPath(), name)
 	fmt.Printf("Lookup: [%s]\n", childPath)
@@ -241,7 +230,7 @@ func (hn *HelloNode) Read(ctx context.Context, fh fs.FileHandle, dest []byte, of
 	return fuse.ReadResultData(entry.Data[off:end]), fs.OK
 }
 
-// Flush flushs all buffers. It's a no-op for a read-only filesystem. Even
+// Flush flushes all buffers. It's a no-op for a read-only filesystem. Even
 // though Open returns a managed object, this is still required.
 func (hn *HelloNode) Flush(ctx context.Context, fh fs.FileHandle) syscall.Errno {
 	return fs.OK
@@ -250,7 +239,7 @@ func (hn *HelloNode) Flush(ctx context.Context, fh fs.FileHandle) syscall.Errno 
 // Open returns a file struct with the open file.
 func (hn *HelloNode) Open(ctx context.Context, mode uint32) (fh fs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
 	filepath := hn.currentPath()
-	fmt.Printf("Open (%032b): %s\n", mode, filepath)
+	fmt.Printf("Open (%032b): [%s]\n", mode, filepath)
 
 	if mode&syscall.S_IFREG == 0 {
 		fmt.Printf("File mode not valid: (%d) != (%d)\n", mode, syscall.S_IFREG)
